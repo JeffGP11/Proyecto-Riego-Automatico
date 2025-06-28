@@ -1,0 +1,258 @@
+// === Librerías ===
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <DHT.h>
+#include <ESP32TimerInterrupt.h>
+
+// === WiFi y MQTT ===
+const char* ssid = "NETLIFE-FBALLAGAN";
+const char* password = "cris97ymateo01";
+const char* mqtt_server = "192.168.100.95";
+const int mqtt_port = 1883;
+
+// === Pines ===
+#define DHTPIN 4
+#define DHTTYPE DHT22
+#define SUELO_PIN 34
+#define BOMBA_PIN 23
+#define FAN_ENA 26     // ENA del L298N
+#define FAN_IN1 27     // IN1
+#define FAN_IN2 14     // IN2
+
+// === Calibración sensor de suelo ===
+const int SUELO_SECO = 4095;
+const int SUELO_HUMEDO = 2675;
+
+// === Umbrales ===
+const float TEMP_MIN = 10.0;
+const float TEMP_MAX = 30.0;
+const int HUMEDAD_MIN = 0;
+const int HUMEDAD_MAX = 100;
+float umbralTemperatura = 25.5;
+int umbralHumedadSuelo = 30;
+
+// === Estado del sistema ===
+struct Sistema {
+  bool automatico = true;
+  bool ventilador = false;
+  bool bomba = false;
+  int humedadSuelo = 0;
+  int velocidadManual = 0; // PWM en manual (0-255)
+} estado;
+
+// === Objetos ===
+DHT dht(DHTPIN, DHTTYPE);
+WiFiClient espClient;
+PubSubClient client(espClient);
+ESP32Timer ITimer(0);
+
+// === Flags para ISR ===
+volatile bool flagSensor = false;
+volatile bool flagControl = false;
+
+// === PWM ===
+const int PWM_CHANNEL = 0;
+const int PWM_FREQ = 5000;
+const int PWM_RES = 8;
+
+void setup() {
+  Serial.begin(115200);
+  dht.begin();
+  pinMode(SUELO_PIN, INPUT);
+  pinMode(BOMBA_PIN, OUTPUT);
+  pinMode(FAN_IN1, OUTPUT);
+  pinMode(FAN_IN2, OUTPUT);
+  digitalWrite(FAN_IN1, HIGH);
+  digitalWrite(FAN_IN2, LOW);
+  ledcSetup(PWM_CHANNEL, PWM_FREQ, PWM_RES);
+  ledcAttachPin(FAN_ENA, PWM_CHANNEL);
+  ledcWrite(PWM_CHANNEL, 0);
+
+  setup_wifi();
+  client.setServer(mqtt_server, mqtt_port);
+  client.setCallback(manejarMensaje);
+
+  ITimer.attachInterruptInterval(1000000, manejarTemporizador);
+  publicarEstados();
+}
+
+void setup_wifi() {
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi conectado. IP: " + WiFi.localIP().toString());
+}
+
+bool manejarTemporizador(void*) {
+  static bool alterna = false;
+  alterna = !alterna;
+  if (alterna) flagSensor = true;
+  flagControl = true;
+  return true;
+}
+
+void loop() {
+  if (!client.connected()) reconectarMQTT();
+  client.loop();
+
+  if (flagSensor) {
+    flagSensor = false;
+    leerSensores();
+  }
+  if (flagControl) {
+    flagControl = false;
+    if (estado.automatico) controlAutomatico();
+    controlarBomba();
+    controlarVentilador();
+  }
+}
+
+int leerHumedadSuelo() {
+  int lectura = analogRead(SUELO_PIN);
+  return constrain(map(lectura, SUELO_SECO, SUELO_HUMEDO, 0, 100), 0, 100);
+}
+
+void leerSensores() {
+  float temp = dht.readTemperature();
+  float humAire = dht.readHumidity();
+  estado.humedadSuelo = leerHumedadSuelo();
+  publicarDatos(temp, humAire, estado.humedadSuelo);
+  Serial.printf("Temp: %.1f | HumAire: %.1f | HumSuelo: %d\n", temp, humAire, estado.humedadSuelo);
+}
+
+void controlarVentilador() {
+  if (estado.automatico) {
+    float temp = dht.readTemperature();
+    if (temp >= umbralTemperatura) {
+      estado.ventilador = true;
+      if (temp >= umbralTemperatura) {
+      estado.ventilador = true;
+      int pwmMin = 120;
+      int pwmMax = 255;
+
+      float rangoTemp = TEMP_MAX - umbralTemperatura;
+      float exceso = temp - umbralTemperatura;
+      exceso = constrain(exceso, 0, rangoTemp);
+
+      int velocidad = pwmMin + ((pwmMax - pwmMin) * (exceso / rangoTemp));
+      velocidad = constrain(velocidad, pwmMin, pwmMax);
+
+      ledcWrite(PWM_CHANNEL, velocidad);
+} else {
+  estado.ventilador = false;
+  ledcWrite(PWM_CHANNEL, 0);
+}
+
+    } else {
+      estado.ventilador = false;
+      ledcWrite(PWM_CHANNEL, 0);
+    }
+  } else {
+    int pwm = constrain(estado.velocidadManual, 0, 255);
+    estado.ventilador = pwm > 0;
+    ledcWrite(PWM_CHANNEL, pwm);
+  }
+  client.publish("estado/ventilador", estado.ventilador ? "ON" : "OFF", true);
+}
+
+void controlarBomba() {
+  if (estado.automatico) {
+    bool activar = estado.humedadSuelo < umbralHumedadSuelo;
+    if (activar != estado.bomba) {
+      estado.bomba = activar;
+      digitalWrite(BOMBA_PIN, activar ? HIGH : LOW);
+      client.publish("estado/bomba", activar ? "ON" : "OFF", true);
+    }
+  }
+}
+
+void controlAutomatico() {
+  controlarVentilador();
+  controlarBomba();
+}
+
+void manejarMensaje(char* topic, byte* payload, unsigned int length) {
+  String mensaje;
+  for (unsigned int i = 0; i < length; i++) mensaje += (char)payload[i];
+  mensaje.trim();
+  String topico(topic);
+
+  Serial.printf("[%s] %s\n", topic, mensaje.c_str());
+
+  if (topico == "control/modo") {
+    estado.automatico = mensaje.equalsIgnoreCase("automatico");
+    publicarEstados();
+    return;
+  }
+
+  if (!estado.automatico) {
+    if (topico == "control/ventilador") {
+      int valor = mensaje.toInt();
+      estado.velocidadManual = constrain(valor, 0, 255);
+    }
+    if (topico == "control/bomba") {
+  estado.bomba = mensaje.equalsIgnoreCase("ON");
+  digitalWrite(BOMBA_PIN, estado.bomba ? HIGH : LOW);
+  client.publish("estado/bomba", estado.bomba ? "ON" : "OFF", true);
+    }
+  }
+
+  if (topico == "config/umbral_temp") {
+    float nuevo = mensaje.toFloat();
+    if (nuevo >= TEMP_MIN && nuevo <= TEMP_MAX) {
+      umbralTemperatura = nuevo;
+      String aviso = "✅ Umbral temperatura actualizado a " + String(nuevo, 1) + " °C";
+      client.publish("log", aviso.c_str());
+    } else {
+      client.publish("log", "⚠️ Umbral de temperatura fuera de rango (10–30 °C)");
+    }
+  }
+
+  if (topico == "config/umbral_humedad") {
+    int nuevo = mensaje.toInt();
+    if (nuevo >= HUMEDAD_MIN && nuevo <= HUMEDAD_MAX) {
+      umbralHumedadSuelo = nuevo;
+      String aviso = "✅ Umbral humedad actualizado a " + String(nuevo) + "%";
+      client.publish("log", aviso.c_str());
+    } else {
+      client.publish("log", "⚠️ Umbral de humedad fuera de rango (0–100%)");
+    }
+  }
+}
+
+void publicarDatos(float temp, float humAire, int humSuelo) {
+  char buffer[10];
+  dtostrf(temp, 0, 1, buffer);
+  client.publish("sensores/temperatura", buffer);
+  dtostrf(humAire, 0, 1, buffer);
+  client.publish("sensores/humedad_aire", buffer);
+  itoa(humSuelo, buffer, 10);
+  client.publish("sensores/humedad_suelo", buffer);
+}
+
+void publicarEstados() {
+  client.publish("estado/modo", estado.automatico ? "AUTOMATICO" : "MANUAL", true);
+  client.publish("estado/ventilador", estado.ventilador ? "ON" : "OFF", true);
+  client.publish("estado/bomba", estado.bomba ? "ON" : "OFF", true);
+  char buffer[10];
+  dtostrf(umbralTemperatura, 0, 1, buffer);
+  client.publish("config/umbral_temp", buffer, true);
+  itoa(umbralHumedadSuelo, buffer, 10);
+  client.publish("config/umbral_humedad", buffer, true);
+}
+
+void reconectarMQTT() {
+  while (!client.connected()) {
+    if (client.connect("ESP32Client")) {
+      const char* topics[] = {
+        "control/modo", "control/ventilador", "control/bomba", "config/umbral_temp", "config/umbral_humedad"
+      };
+      for (auto t : topics) client.subscribe(t);
+      publicarEstados();
+    } else {
+      delay(5000);
+    }
+  }
+}
