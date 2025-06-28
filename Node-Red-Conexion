@@ -1,0 +1,244 @@
+[
+    {
+        "id": "861c17bfb4fbba76",
+        "type": "tab",
+        "label": "Flow 1",
+        "disabled": false,
+        "info": "",
+        "env": []
+    },
+    {
+        "id": "8d2a249559ee587d",
+        "type": "debug",
+        "z": "861c17bfb4fbba76",
+        "name": "debug 1",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 800,
+        "y": 480,
+        "wires": []
+    },
+    {
+        "id": "379faa0735185147",
+        "type": "debug",
+        "z": "861c17bfb4fbba76",
+        "name": "debug 2",
+        "active": true,
+        "tosidebar": true,
+        "console": false,
+        "tostatus": false,
+        "complete": "false",
+        "statusVal": "",
+        "statusType": "auto",
+        "x": 540,
+        "y": 580,
+        "wires": []
+    },
+    {
+        "id": "eb1b3941c7a419fd",
+        "type": "mqtt in",
+        "z": "861c17bfb4fbba76",
+        "name": "Temperatura",
+        "topic": "sensores/temperatura",
+        "qos": "0",
+        "datatype": "auto",
+        "broker": "3cf1379a8b167a36",
+        "nl": false,
+        "rap": false,
+        "rh": 0,
+        "inputs": 0,
+        "x": 290,
+        "y": 620,
+        "wires": [
+            [
+                "b6f947f19cbb67df"
+            ]
+        ]
+    },
+    {
+        "id": "b80b0c6c0b97d313",
+        "type": "mqtt in",
+        "z": "861c17bfb4fbba76",
+        "name": "Humedad Aire",
+        "topic": "sensores/humedad_aire",
+        "qos": "0",
+        "datatype": "auto",
+        "broker": "3cf1379a8b167a36",
+        "nl": false,
+        "rap": false,
+        "rh": 0,
+        "inputs": 0,
+        "x": 300,
+        "y": 680,
+        "wires": [
+            [
+                "b6f947f19cbb67df",
+                "379faa0735185147"
+            ]
+        ]
+    },
+    {
+        "id": "b56a76c460e08912",
+        "type": "mqtt in",
+        "z": "861c17bfb4fbba76",
+        "name": "Humedad Suelo",
+        "topic": "sensores/humedad_suelo",
+        "qos": "0",
+        "datatype": "auto",
+        "broker": "3cf1379a8b167a36",
+        "nl": false,
+        "rap": false,
+        "rh": 0,
+        "inputs": 0,
+        "x": 310,
+        "y": 740,
+        "wires": [
+            [
+                "b6f947f19cbb67df"
+            ]
+        ]
+    },
+    {
+        "id": "b6f947f19cbb67df",
+        "type": "join",
+        "z": "861c17bfb4fbba76",
+        "name": "Juntar sensores",
+        "mode": "custom",
+        "build": "object",
+        "property": "payload",
+        "propertyType": "msg",
+        "key": "topic",
+        "joiner": "\\n",
+        "joinerType": "str",
+        "useparts": true,
+        "accumulate": false,
+        "timeout": "1",
+        "count": "3",
+        "reduceRight": false,
+        "reduceExp": "",
+        "reduceInit": "",
+        "reduceInitType": "",
+        "reduceFixup": "",
+        "x": 550,
+        "y": 680,
+        "wires": [
+            [
+                "8d2a249559ee587d",
+                "e41a949ee6846ffb"
+            ]
+        ]
+    },
+    {
+        "id": "dfce6511089b098c",
+        "type": "file",
+        "z": "861c17bfb4fbba76",
+        "name": "Reiniciar archivo con encabezados",
+        "filename": "C:\\Semestre 5 y 6 UIDE\\Embebidos\\Proyecto\\Datos.csv",
+        "appendNewline": true,
+        "createDir": true,
+        "overwriteFile": "true",
+        "encoding": "utf8",
+        "x": 620,
+        "y": 820,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "cde0964e1d89c058",
+        "type": "inject",
+        "z": "861c17bfb4fbba76",
+        "name": "Reiniciar CSV al iniciar",
+        "props": [
+            {
+                "p": "payload"
+            }
+        ],
+        "repeat": "",
+        "crontab": "",
+        "once": true,
+        "onceDelay": 0.2,
+        "topic": "",
+        "payload": "Fecha;Hora;Temperatura;Humedad_Aire;Humedad_Suelo",
+        "payloadType": "str",
+        "x": 350,
+        "y": 820,
+        "wires": [
+            [
+                "dfce6511089b098c"
+            ]
+        ]
+    },
+    {
+        "id": "e41a949ee6846ffb",
+        "type": "function",
+        "z": "861c17bfb4fbba76",
+        "name": "Formatear JSON a CSV",
+        "func": "let fecha = new Date();\nlet temp = msg.payload[\"sensores/temperatura\"];\nlet haire = msg.payload[\"sensores/humedad_aire\"];\nlet hsuelo = msg.payload[\"sensores/humedad_suelo\"];\n\nlet hora = fecha.toTimeString().split(' ')[0]; // Solo HH:MM:SS\nlet dia = fecha.toLocaleDateString(\"es-EC\");\n\nmsg.payload = `${dia};${hora};${temp};${haire};${hsuelo}`;\nreturn msg;\n",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 830,
+        "y": 680,
+        "wires": [
+            [
+                "790d31eacd7b784c"
+            ]
+        ]
+    },
+    {
+        "id": "790d31eacd7b784c",
+        "type": "file",
+        "z": "861c17bfb4fbba76",
+        "name": "Guardar datos CSV",
+        "filename": "C:\\Semestre 5 y 6 UIDE\\Embebidos\\Proyecto\\Datos.csv",
+        "appendNewline": true,
+        "createDir": true,
+        "overwriteFile": "false",
+        "encoding": "utf8",
+        "x": 1050,
+        "y": 680,
+        "wires": [
+            []
+        ]
+    },
+    {
+        "id": "3cf1379a8b167a36",
+        "type": "mqtt-broker",
+        "name": "Hola",
+        "broker": "192.168.100.95",
+        "port": 1883,
+        "clientid": "",
+        "autoConnect": true,
+        "usetls": false,
+        "protocolVersion": 4,
+        "keepalive": 60,
+        "cleansession": true,
+        "autoUnsubscribe": true,
+        "birthTopic": "",
+        "birthQos": "0",
+        "birthRetain": "false",
+        "birthPayload": "",
+        "birthMsg": {},
+        "closeTopic": "",
+        "closeQos": "0",
+        "closeRetain": "false",
+        "closePayload": "",
+        "closeMsg": {},
+        "willTopic": "",
+        "willQos": "0",
+        "willRetain": "false",
+        "willPayload": "",
+        "willMsg": {},
+        "userProps": "",
+        "sessionExpiry": ""
+    }
+]
